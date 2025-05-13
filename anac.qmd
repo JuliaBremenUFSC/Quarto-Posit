@@ -1,0 +1,235 @@
+---
+title: "Dados Estatisticos ANAC"
+author: "Julia Cristina Bremen"
+format: 
+  dashboard:
+    sidebar: 
+      style: "floating"
+      page-layout: full
+server: shiny
+theme: yeti
+---
+
+```{python}
+import pandas as pd
+import seaborn as sns
+from shiny import reactive
+from shiny.express import render
+from shiny import ui
+from shinywidgets import render_widget
+import plotly.express as px
+from datetime import date
+```
+
+```{python}
+# Caregando Dados
+anac_df_original = pd.read_csv("anac.csv",  delimiter=";", encoding="latin1", low_memory=False)
+
+# Pré-processamento
+anac_df = anac_df_original.copy()
+
+colunas_data = ['partida_prevista', 'partida_real', 'chegada_prevista', 'chegada_real']
+for col in colunas_data:
+    if col in anac_df.columns:
+        anac_df[col] = pd.to_datetime(anac_df[col], format='%d/%m/%Y %H:%M', errors='coerce')
+
+if 'situacao_voo' in anac_df.columns:
+    anac_df_processado = anac_df[anac_df['situacao_voo'] != 'CANCELADO'].copy()
+else:
+    anac_df_processado = anac_df.copy()
+
+if 'assentos' in anac_df_processado.columns:
+    anac_df_processado = anac_df_processado[anac_df_processado['assentos'] != 0].copy()
+```
+
+```{python}
+@reactive.calc
+def dados_filtrados():
+    data_inicio_selecionada, data_fim_selecionada = input.periodo_selecionado()
+
+    return anac_df_processado[
+        (anac_df_processado["assentos"] <= input.assentos()) &
+        (anac_df_processado["situacao_partida"].isin(input.situacao_partida())) &
+        (anac_df_processado["partida_prevista"].dt.date >= data_inicio_selecionada) &
+        (anac_df_processado["partida_prevista"].dt.date <= data_fim_selecionada)
+    ]
+```
+
+## {.sidebar}
+
+```{python}
+ui.input_date_range(
+    "periodo_selecionado",
+    "Selecione o Periodo da Partida Prevista:",
+    start="2024-12-01",       
+    end="2024-12-31", 
+    format="dd/mm/yyyy",       
+    language="pt-BR",          
+    separator=" ate "          
+)
+
+ui.input_slider("assentos", "Numero de assentos:", 0, 270, value=270)
+
+categorias_situacao_partida = [
+    "Pontual",
+    "Antecipado",
+    "Atraso 30-60",
+    "Atraso 60-120",
+    "Atraso 120-240"
+]
+
+ui.input_checkbox_group("situacao_partida", "Selecione a Situacao da Partida:", choices=categorias_situacao_partida, selected=categorias_situacao_partida)
+```
+
+# Dados
+```{python}
+ui.markdown(""" ### Introducao
+
+Este dashboard interativo analisa dados de voos da Agencia Nacional de Aviacao Civil (ANAC), buscando fornecer uma compreensao sobre as operacoes aereas no aeroporto internacional de Florianopolis. 
+Tem como objetivo ser uma ferramenta visual e interativa para que possamos explorar padroes de voos, identificar tendencias e analisar o desempenho de rotas e companhias. Alem dos graficos interativos, os filtros permitem observar diferentes segmentos de voos de forma detalhada. Essa analise facilita interpretacoes e pode auxiliar na tomada de decisoes e no entendimento do setor.
+
+---
+
+### Estrutura dos Dados:
+- **Numero de linhas (voos):** 1565
+- **Numero de colunas (atribuicoes):** 13
+
+---
+
+### Descricao das Colunas:
+
+- **icao_empresa:** Codigo identificador ICAO (Organizacao da Aviacao Civil Internacional) da empresa aerea.
+- **empresa:** Nome da empresa aerea responsavel pelo voo.
+- **numero:** Numero identificador do voo.
+- **modelo_equipamento:** Modelo especifico da aeronave utilizada no voo.
+- **assentos:** Numero total de assentos disponiveis na aeronave.
+- **icao_origem:** Codigo identificador ICAO do aeroporto de origem do voo.
+- **origem:** Nome da cidade e/ou aeroporto de origem do voo.
+- **partida_prevista:** Data e hora originalmente programadas para a partida do voo.
+- **partida_real:** Data e hora em que o voo efetivamente partiu.
+- **icao_destino:** Codigo identificador ICAO do aeroporto de destino do voo.
+- **destino:** Nome da cidade e/ou aeroporto de destino do voo.
+- **situacao_voo:** Situacao geral do voo ao final da operacao (ex: Realizado, Cancelado).
+- **situacao_partida:** Detalhamento da pontualidade da partida do voo (ex: Pontual, Antecipado, Atraso 30-60).
+
+---
+
+### Tabela de Dados Filtrados
+A tabela abaixo exibe os dados de voos filtrados de acordo com os controles selecionados na barra lateral.
+
+""")
+
+@render.data_frame
+def tabela_dados():
+    df_para_tabela = dados_filtrados()
+    return render.DataGrid(df_para_tabela, height="1000px")
+```
+
+# Situacao de Voo
+
+```{python}
+ui.markdown(""" ### Contagem de Voos por Empresa Aerea
+
+Este grafico de barras exibe a quantidade de voos operados por cada empresa aerea.
+""")
+
+@render_widget
+def grafico_barras_empresa_ui():
+    df_grafico = dados_filtrados()
+    coluna_analise = "icao_empresa"
+
+    if df_grafico.empty:
+        fig = px.scatter()
+        fig.add_annotation(text="Sem dados para exibir com os filtros atuais.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font_size=16)
+        return fig 
+
+    if coluna_analise not in df_grafico.columns:
+        fig = px.scatter()
+        fig.add_annotation(text=f"Coluna '{coluna_analise}' não encontrada.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font_size=16)
+        return fig
+
+    contagem_empresas = df_grafico[coluna_analise].dropna().value_counts()
+
+    if contagem_empresas.empty:
+        fig = px.scatter()
+        fig.add_annotation(text=f"Não há dados válidos na coluna '{coluna_analise}' para exibir.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font_size=16)
+        return fig
+
+    fig_barras = px.bar(
+        x=contagem_empresas.values,
+        y=contagem_empresas.index,
+        orientation='h',
+        labels={'x': 'Número de Voos', 'y': 'Empresa Aérea (Código ICAO)'},
+        title="Número de Voos por Empresa Aérea"
+    )
+    fig_barras.update_layout(
+        yaxis={'categoryorder': 'total ascending'},
+        margin=dict(l=100)
+    )
+    return fig_barras 
+```
+
+# Horarios previstos e realizados
+```{python}
+ui.markdown(""" ### Comparativo de Partidas: Horario Previsto vs. Horario Real
+
+Este grafico de dispersao oferece uma comparacao visual direta entre os horarios de partida previstos e os horarios de partida que realmente ocorreram para os voos selecionados.
+
+Cada ponto no grafico representa um voo individual. Para melhor visualizacao utilize periodos de tempo menores com o auxilio do filtro ao lado.
+
+**Linha diagonal vermelha:** representa a situacao ideal onde o horario da partida real e exatamente igual ao horario da partida prevista.
+""")
+
+@render_widget
+def scatter_partidas_ui():
+    df_grafico = dados_filtrados()
+    col_x_partida = "partida_prevista"
+    col_y_partida = "partida_real"
+
+    if df_grafico.empty:
+        fig = px.scatter()
+        fig.add_annotation(text="Sem dados para o gráfico comparativo de partidas.", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
+        return fig
+    if not (col_x_partida in df_grafico.columns and col_y_partida in df_grafico.columns):
+        fig = px.scatter()
+        fig.add_annotation(text=f"Colunas '{col_x_partida}' ou '{col_y_partida}' não encontradas.", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
+        return fig
+    df_plotavel_partida = df_grafico.dropna(subset=[col_x_partida, col_y_partida])
+    if df_plotavel_partida.empty:
+        fig = px.scatter()
+        fig.add_annotation(text=f"Sem dados válidos (não nulos) em '{col_x_partida}' e '{col_y_partida}'.", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font_size=16)
+        return fig
+
+    fig_scatter = px.scatter(
+        df_plotavel_partida,
+        x=col_x_partida,
+        y=col_y_partida,
+        title="Partidas: Horário Real vs. Horário Previsto",
+        labels={col_x_partida: "Partida Prevista", col_y_partida: "Partida Real"},
+        opacity=0.5
+    )
+
+    min_val = min(df_plotavel_partida[col_x_partida].min(), df_plotavel_partida[col_y_partida].min())
+    max_val = max(df_plotavel_partida[col_x_partida].max(), df_plotavel_partida[col_y_partida].max())
+    
+    fig_scatter.add_shape(type="line",
+                          x0=min_val, y0=min_val,
+                          x1=max_val, y1=max_val,
+                          line=dict(color="Red", width=1, dash="solid"))
+
+    fig_scatter.update_traces(marker=dict(size=6)) 
+
+    fig_scatter.update_layout(
+        height=650,
+        margin=dict(l=50, r=50, t=80, b=50) 
+    )
+
+    return fig_scatter
+```
+
