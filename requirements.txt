@@ -2,5 +2,6 @@ pandas
 seaborn
 shiny
 shinywidgets
-plotly.express
+plotly
 datetime
+jupyter
