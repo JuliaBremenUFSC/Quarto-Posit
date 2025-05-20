@@ -1,6 +1,5 @@
 pandas
 seaborn
-shiny.express
 shiny
 shinywidgets
 plotly.express
